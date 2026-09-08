@@ -110,10 +110,10 @@ def template LRSCMacroConstructor {{
         StaticInstPtr acq_fence;
 
         // set up release fence
+        // rl ≈ release: constrain prior writes (write barrier). Never weaker.
         if (RL) {
             rel_fence = new MemFenceMicro(machInst, No_OpClass);
             rel_fence->setFlag(IsFirstMicroop);
-            rel_fence->setFlag(IsReadBarrier);
             rel_fence->setFlag(IsWriteBarrier);
             rel_fence->setFlag(IsDelayedCommit);
         }
@@ -132,11 +132,11 @@ def template LRSCMacroConstructor {{
         }
 
         // set up acquire fence
+        // aq ≈ acquire: constrain subsequent reads (read barrier). Never weaker.
         if (AQ) {
             acq_fence = new MemFenceMicro(machInst, No_OpClass);
             acq_fence->setFlag(IsLastMicroop);
             acq_fence->setFlag(IsReadBarrier);
-            acq_fence->setFlag(IsWriteBarrier);
         }
 
         if (RL && AQ) {
@@ -172,10 +172,10 @@ def template AtomicMemOpMacroConstructor {{
         StaticInstPtr acq_fence;
 
         // set up release fence
+        // rl ≈ release: write barrier only (Phase 3; never weaker than prior full barrier).
         if (RL) {
             rel_fence = new MemFenceMicro(machInst, No_OpClass);
             rel_fence->setFlag(IsFirstMicroop);
-            rel_fence->setFlag(IsReadBarrier);
             rel_fence->setFlag(IsWriteBarrier);
             rel_fence->setFlag(IsDelayedCommit);
         }
@@ -194,11 +194,11 @@ def template AtomicMemOpMacroConstructor {{
         }
 
         // set up acquire fence
+        // aq ≈ acquire: read barrier only.
         if (AQ) {
             acq_fence = new MemFenceMicro(machInst, No_OpClass);
             acq_fence->setFlag(IsLastMicroop);
             acq_fence->setFlag(IsReadBarrier);
-            acq_fence->setFlag(IsWriteBarrier);
         }
 
         if (RL && AQ) {

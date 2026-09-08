@@ -61,6 +61,50 @@ def template ImmConstructor {{
     }
 }};
 
+def template FenceConstructor {{
+    %(class_name)s::%(class_name)s(ExtMachInst machInst)
+        : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+        %(imm_code)s;
+
+        // Only FENCE (funct3=0) carries RVWMO pred/succ ordering.
+        // FENCE.I keeps its serialize/squash flags from the decoder only.
+        if (!FUNCT3) {
+            // Map RISC-V fence pred/succ (I/O/R/W) onto gem5 barrier flags.
+            // Bit layout matches Unpriv: [3]=I [2]=O [1]=R [0]=W for PRED and SUCC.
+            //
+            // FENCE.TSO (fm=1000, pred=RW, succ=RW) may legally be implemented as
+            // FENCE RW,RW (full barrier) — we do that (over-strong vs pure TSO fence).
+            //
+            // Phase-1/4 policy (never weaker than RVWMO for these approximations):
+            // - Empty fence or any I/O bit => full read+write barrier (over-strong OK).
+            // - Otherwise set IsReadBarrier if R appears in pred or succ, and
+            //   IsWriteBarrier if W appears in pred or succ.
+            const uint8_t pred = PRED;
+            const uint8_t succ = SUCC;
+            const bool is_fence_tso = (FM == 0x8 && pred == 0x3 && succ == 0x3);
+            const bool empty = (pred == 0 && succ == 0);
+            const bool any_io = (pred | succ) & 0xc; // I or O
+            if (is_fence_tso || empty || any_io) {
+                setFlag(IsReadBarrier);
+                setFlag(IsWriteBarrier);
+            } else {
+                if ((pred | succ) & 0x2) // R
+                    setFlag(IsReadBarrier);
+                if ((pred | succ) & 0x1) // W
+                    setFlag(IsWriteBarrier);
+                // Defensive: never produce a fence with no barrier flags.
+                if (!isReadBarrier() && !isWriteBarrier()) {
+                    setFlag(IsReadBarrier);
+                    setFlag(IsWriteBarrier);
+                }
+            }
+        }
+    }
+}};
+
 def template ImmExecute {{
     Fault
     %(class_name)s::execute(
@@ -134,6 +178,13 @@ def template FenceExecute {{
         std::stringstream ss;
         ss << mnemonic;
         if (!FUNCT3) {
+            // FENCE.TSO is encoded as fm=0x8, pred=RW, succ=RW.
+            if (FM == 0x8 && PRED == 0x3 && SUCC == 0x3) {
+                ss.str("");
+                ss.clear();
+                ss << "fence.tso";
+                return ss.str();
+            }
             ss << ' ';
             if (PRED & 0x8)
                 ss << 'i';
@@ -474,7 +525,7 @@ def format FenceOp(code, imm_type='int64_t', *opt_flags) {{
         {'code': code, 'imm_code': 'imm = sext<12>(IMM12);',
          'regs': ','.join(regs)}, opt_flags)
     header_output = ImmDeclare.subst(iop)
-    decoder_output = ImmConstructor.subst(iop)
+    decoder_output = FenceConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
     exec_output = FenceExecute.subst(iop)
 }};

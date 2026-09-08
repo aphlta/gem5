@@ -1335,8 +1335,10 @@ decode QUADRANT default Unknown::unknown() {
 
         0x03: decode FUNCT3 {
             format FenceOp {
+                // Barrier flags are derived from PRED/SUCC in FenceConstructor.
+                // Do not hardcode IsReadBarrier/IsWriteBarrier here.
                 0x0: fence({{
-                }}, uint64_t, IsReadBarrier, IsWriteBarrier, No_OpClass);
+                }}, uint64_t, No_OpClass);
                 0x1: fence_i({{
                 }}, uint64_t, IsNonSpeculative, IsSerializeAfter,
                     IsSquashAfter, No_OpClass);

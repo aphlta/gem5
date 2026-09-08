@@ -795,9 +795,11 @@ Execute::issue(ThreadID thread_id)
                 inst->minorTraceInst(*this);
             }
 
-            /* Mark up barriers in the LSQ */
+            /* Mark up barriers in the LSQ.
+             * Treat any R/W barrier as a full barrier in Minor (never weaker). */
             if (!discarded && inst->isInst() &&
-                inst->staticInst->isFullMemBarrier())
+                (inst->staticInst->isReadBarrier() ||
+                 inst->staticInst->isWriteBarrier()))
             {
                 DPRINTF(MinorMem, "Issuing memory barrier inst: %s\n", *inst);
                 lsq.issuedMemBarrierInst(inst);
@@ -1018,7 +1020,9 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
             completed_inst = completed_mem_inst;
         }
         completed_mem_issue = completed_inst;
-    } else if (inst->isInst() && inst->staticInst->isFullMemBarrier() &&
+    } else if (inst->isInst() &&
+        (inst->staticInst->isReadBarrier() ||
+         inst->staticInst->isWriteBarrier()) &&
         !lsq.canPushIntoStoreBuffer())
     {
         DPRINTF(MinorExecute, "Can't commit data barrier inst: %s yet as"
@@ -1434,8 +1438,11 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
              *  clear its dependencies */
             ex_info.inFlightInsts->pop();
 
-            /* Complete barriers in the LSQ/move to store buffer */
-            if (inst->isInst() && inst->staticInst->isFullMemBarrier()) {
+            /* Complete barriers in the LSQ/move to store buffer.
+             * Partial fences are still completed as barriers in Minor. */
+            if (inst->isInst() &&
+                (inst->staticInst->isReadBarrier() ||
+                 inst->staticInst->isWriteBarrier())) {
                 DPRINTF(MinorMem, "Completing memory barrier"
                     " inst: %s committed: %d\n", *inst, committed_inst);
                 lsq.completeMemBarrierInst(inst, committed_inst);

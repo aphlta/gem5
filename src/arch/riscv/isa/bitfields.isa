@@ -59,6 +59,8 @@ def bitfield IMM12  <31:20>;
 // Sync
 def bitfield SUCC  <23:20>;
 def bitfield PRED  <27:24>;
+// FENCE mode (fm): 0000=normal, 1000=FENCE.TSO when pred/succ=RW
+def bitfield FM    <31:28>;
 
 // S-Type
 def bitfield IMM5   <11:7>;

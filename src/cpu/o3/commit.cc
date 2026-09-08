@@ -1133,7 +1133,13 @@ Commit::commitHead(const DynInstPtr &head_inst, unsigned inst_num)
                 "at the head of the ROB, PC %s.\n",
                 tid, head_inst->seqNum, head_inst->pcState());
 
-        if (inst_num > 0 || iewStage->hasStoresToWB(tid)) {
+        // Phase 2 RVWMO: only write-side barriers must drain the store
+        // queue before the barrier itself executes. Read-only barriers no
+        // longer wait for all stores to write back (still never weaker for
+        // fence r,* style encodings; see litmus-work/expected/p2-o3-fence-design.md).
+        const bool must_drain_stores = head_inst->isWriteBarrier();
+        if (inst_num > 0 ||
+            (must_drain_stores && iewStage->hasStoresToWB(tid))) {
             DPRINTF(Commit,
                     "[tid:%i] [sn:%llu] "
                     "Waiting for all stores to writeback.\n",

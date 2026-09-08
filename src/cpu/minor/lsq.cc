@@ -157,7 +157,11 @@ LSQ::LSQRequest::containsAddrRangeOf(LSQRequestPtr other_request)
 bool
 LSQ::LSQRequest::isBarrier()
 {
-    return inst->isInst() && inst->staticInst->isFullMemBarrier();
+    // Minor conservatively treats any R/W mem barrier as a barrier so
+    // partial fences (e.g. fence w,w) never become ordering nops here.
+    return inst->isInst() &&
+        (inst->staticInst->isReadBarrier() ||
+         inst->staticInst->isWriteBarrier());
 }
 
 bool
@@ -1716,7 +1720,9 @@ makePacketForRequest(const RequestPtr &request, bool isLoad,
 void
 LSQ::issuedMemBarrierInst(MinorDynInstPtr inst)
 {
-    assert(inst->isInst() && inst->staticInst->isFullMemBarrier());
+    assert(inst->isInst() &&
+        (inst->staticInst->isReadBarrier() ||
+         inst->staticInst->isWriteBarrier()));
     assert(inst->id.execSeqNum > lastMemBarrier[inst->id.threadId]);
 
     /* Remember the barrier.  We only have a notion of one

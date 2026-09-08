@@ -1,0 +1,27 @@
+# Runtime / simulation outputs (do not archive)
+logs/
+m5out*/
+**/m5out*/
+
+# Build / harness binaries and object files
+**/run.exe
+**/a.out
+harness/**/src/*.o
+harness/**/src/*.o.*
+harness/**/src/obj
+harness/**/*.elf
+harness/**/bin/
+harness/**/*.bin
+
+# Keep only top-level .litmus sources under harness/; ignore generated diy trees
+harness/*/
+
+# Scratch / docker / tool logs at litmus-work root
+*.log
+docker-*.log
+gem5-*.log
+litmus7-*.log
+
+# Local diy / cross-build scratch dirs
+sb-cross/
+sb-gem5/
