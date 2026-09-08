@@ -1089,11 +1089,13 @@ class Request : public Extensible<Request>
     bool isToPOC() const { return _flags.isSet(DST_POC); }
     Flags getDest() const { return _flags & DST_BITS; }
 
-    bool isAcquire() const { return _cacheCoherenceFlags.isSet(ACQUIRE); }
+    // ACQUIRE lives in Flags (ARM/RISCV memAccessFlags); historically
+    // isAcquire wrongly checked cacheCoherenceFlags where those bits are unused.
+    bool isAcquire() const { return _flags.isSet(ACQUIRE); }
     bool
     isAcquirePC() const
     {
-        return _cacheCoherenceFlags.isSet(ACQUIRE_PC);
+        return _flags.isSet(ACQUIRE_PC);
     }
 
     /**

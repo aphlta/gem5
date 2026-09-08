@@ -44,8 +44,8 @@ mkdir -p "${HARNESS_DIR}" "${LOG_DIR}"
 CFG="${LITMUS_WORK}/riscv-gem5.cfg"
 GEN_LOG="${LOG_DIR}/${SAFE_NAME}-gen.log"
 BUILD_LOG="${LOG_DIR}/${SAFE_NAME}-build.log"
-RUN_LOG="${LOG_DIR}/${SAFE_NAME}-${CPU_TYPE}.log"
-M5OUT="${LITMUS_WORK}/m5out/${SAFE_NAME}-${CPU_TYPE}"
+RUN_LOG="${LOG_DIR}/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}.log"
+M5OUT="${LITMUS_WORK}/m5out/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}"
 
 echo "==> [1/3] litmus7 generate: ${NAME}"
 rm -rf "${HARNESS_DIR:?}/"*
@@ -78,10 +78,35 @@ if [[ "${CPU_TYPE}" == "DerivO3CPU" || "${CPU_TYPE}" == *O3* ]]; then
   CACHE_ARGS=(--caches)
 fi
 
+# Phase 6B: ZTSO=1 enables ISA Ztso + needsTSO (bound again after --param).
+if [[ "${ZTSO:-0}" == "1" ]]; then
+  EXTRA_GEM5_ARGS+=(--param 'system.cpu[:].isa[:].extra_extensions=["Ztso"]')
+fi
+
+# Optional Ruby/CHI path (requires ALL gem5 binary with RUBY_PROTOCOL_CHI).
+GEM5_BIN="${GEM5_BIN:-./build/RISCV/gem5.opt}"
+if [[ "${USE_RUBY:-0}" == "1" ]]; then
+  GEM5_BIN="${GEM5_BIN_ALL:-./build/ALL/gem5.opt}"
+  EXTRA_GEM5_ARGS+=(--ruby)
+  if [[ -n "${RUBY_PROTOCOL:-}" ]]; then
+    EXTRA_GEM5_ARGS+=(--protocol "${RUBY_PROTOCOL}")
+  fi
+  # Ruby brings its own caches; avoid Classic --caches conflict.
+  CACHE_ARGS=()
+  # ALL multi-ISA binaries expose RiscvO3CPU, not the DerivO3CPU alias.
+  if [[ "${CPU_TYPE}" == "DerivO3CPU" ]]; then
+    CPU_TYPE="RiscvO3CPU"
+  fi
+fi
+
+# Recompute log/outdir after CPU_TYPE / flags may have changed (ZTSO/RUBY).
+RUN_LOG="${LOG_DIR}/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}.log"
+M5OUT="${LITMUS_WORK}/m5out/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}"
+
 echo "==> [3/3] gem5 SE ${CPU_TYPE} -n ${NUM_CPUS} (container ${GEM5_CONTAINER})"
 CONT_BIN="/gem5/litmus-work/harness/${SAFE_NAME}/src/run.exe"
-CONT_OUT="/gem5/litmus-work/m5out/${SAFE_NAME}-${CPU_TYPE}"
-CONT_LOG="/gem5/litmus-work/logs/${SAFE_NAME}-${CPU_TYPE}.log"
+CONT_OUT="/gem5/litmus-work/m5out/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}"
+CONT_LOG="/gem5/litmus-work/logs/${SAFE_NAME}-${CPU_TYPE}${ZTSO:+-ztso}${USE_RUBY:+-ruby}.log"
 CONT_OUT_PARENT="$(dirname "${CONT_OUT}")"
 CONT_LOG_PARENT="$(dirname "${CONT_LOG}")"
 CACHE_STR="${CACHE_ARGS[*]-}"
@@ -93,14 +118,14 @@ docker exec "${GEM5_CONTAINER}" env \
   CONT_LOG="${CONT_LOG}" CONT_LOG_PARENT="${CONT_LOG_PARENT}" \
   CONT_BIN="${CONT_BIN}" GEM5_CFG="${GEM5_CFG}" \
   NUM_CPUS="${NUM_CPUS}" CPU_TYPE="${CPU_TYPE}" MEM_SIZE="${MEM_SIZE}" \
-  CACHE_STR="${CACHE_STR}" EXTRA_STR="${EXTRA_STR}" \
+  CACHE_STR="${CACHE_STR}" EXTRA_STR="${EXTRA_STR}" GEM5_BIN="${GEM5_BIN}" \
   bash -lc '
 set -e
 cd /gem5
 rm -rf "$CONT_OUT"
 mkdir -p "$CONT_OUT_PARENT" "$CONT_LOG_PARENT"
 # shellcheck disable=SC2086
-./build/RISCV/gem5.opt --outdir="$CONT_OUT" "$GEM5_CFG" \
+$GEM5_BIN --outdir="$CONT_OUT" "$GEM5_CFG" \
   -n "$NUM_CPUS" --cpu-type="$CPU_TYPE" $CACHE_STR \
   -c "$CONT_BIN" --mem-size="$MEM_SIZE" $EXTRA_STR \
   >"$CONT_LOG" 2>&1

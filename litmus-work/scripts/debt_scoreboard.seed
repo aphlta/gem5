@@ -1,0 +1,38 @@
+# Phase C debt-scoreboard seed (assemblable only).
+# Paths relative to litmus-tests-riscv/.../non-mixed-size unless LOCAL:.
+# Why: fixed seed so Reduce can regenerate the same baseline without sampling noise.
+
+# --- R0 ---
+BASIC_2_THREAD/SB.litmus
+BASIC_2_THREAD/MP.litmus
+BASIC_2_THREAD/LB.litmus
+BASIC_2_THREAD/MP+fence.rw.rws.litmus
+
+# --- KPI / local fence.w.w ---
+LOCAL:harness/MP-fence-w-w.litmus
+
+# --- BASIC_2_THREAD samples (SAFE/RELAX-shaped, no aq/rl) ---
+BASIC_2_THREAD/SB+fence.rw.rws.litmus
+BASIC_2_THREAD/LB+fence.rw.rws.litmus
+BASIC_2_THREAD/2+2W.litmus
+BASIC_2_THREAD/2+2W+fence.rw.rws.litmus
+BASIC_2_THREAD/R.litmus
+BASIC_2_THREAD/R+fence.rw.rws.litmus
+BASIC_2_THREAD/S.litmus
+BASIC_2_THREAD/S+fence.rw.rws.litmus
+BASIC_2_THREAD/MP+fence.rw.rw+po.litmus
+BASIC_2_THREAD/MP+po+fence.rw.rw.litmus
+BASIC_2_THREAD/LB+fence.rw.rw+po.litmus
+BASIC_2_THREAD/SB+fence.rw.rw+po.litmus
+
+# --- SAFE samples (IRIW + fence diffs; no poaq/poprl) ---
+SAFE/IRIW+addrs.litmus
+SAFE/IRIW+fence.rw.rws.litmus
+SAFE/IRIW+fence.r.rws.litmus
+SAFE/2+2W+fence.w.ws.litmus
+SAFE/2+2W+fence.rw.rws.litmus
+
+# --- RELAX samples (PodWW family without aq/rl) ---
+RELAX/PodWW/2+2W.litmus
+RELAX/PodWW/MP+po+fence.rw.rw.litmus
+RELAX/PodWW/2+2W+fence.w.w+po.litmus

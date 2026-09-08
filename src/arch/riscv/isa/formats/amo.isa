@@ -119,7 +119,14 @@ def template LRSCMacroConstructor {{
         }
 
         // set up atomic rmw op
-        lrsc = new %(class_name)sMicro(machInst, this);
+        // Keep a raw pointer so we can attach Request ACQUIRE/RELEASE for aq/rl
+        // (StaticInstPtr alone does not expose setMemAccessFlags).
+        auto *lrsc_raw = new %(class_name)sMicro(machInst, this);
+        if (RL)
+            lrsc_raw->setMemAccessFlags(Request::RELEASE);
+        if (AQ)
+            lrsc_raw->setMemAccessFlags(Request::ACQUIRE);
+        lrsc = lrsc_raw;
 
         if (!RL) {
             lrsc->setFlag(IsFirstMicroop);
@@ -181,7 +188,13 @@ def template AtomicMemOpMacroConstructor {{
         }
 
         // set up atomic rmw op
-        rmw_op = new %(class_name)sRMW(machInst, this);
+        auto *rmw_raw = new %(class_name)sRMW(machInst, this);
+        // Phase 6A: aq/rl → Request ACQUIRE/RELEASE on the RMW microop.
+        if (RL)
+            rmw_raw->setMemAccessFlags(Request::RELEASE);
+        if (AQ)
+            rmw_raw->setMemAccessFlags(Request::ACQUIRE);
+        rmw_op = rmw_raw;
 
         if (!RL) {
             rmw_op->setFlag(IsFirstMicroop);

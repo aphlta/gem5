@@ -1,7 +1,7 @@
 # MVP signoff
 
-Generated: 2026-09-08T14:49:28+08:00
-Branch tip: 99c4ff57ab (rvwmo-mvp)
+Generated: 2026-09-08T17:47:16+08:00
+Branch tip: 6e16f1728d (rvwmo-mvp)
 
 | Test | Expected | gem5 | Gate |
 |------|----------|------|------|

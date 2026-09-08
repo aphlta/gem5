@@ -75,6 +75,10 @@ class LoadReservedMicro : public RiscvMicroInst
 
     std::string generateDisassembly(
         Addr pc, const loader::SymbolTable *symtab) const override;
+
+  public:
+    // Expose Request flags so aq/rl macros can attach ACQUIRE/RELEASE.
+    void setMemAccessFlags(Request::Flags flags) { memAccessFlags.set(flags); }
 };
 
 // store-cond
@@ -95,6 +99,9 @@ class StoreCondMicro : public RiscvMicroInst
 
     std::string generateDisassembly(
         Addr pc, const loader::SymbolTable *symtab) const override;
+
+  public:
+    void setMemAccessFlags(Request::Flags flags) { memAccessFlags.set(flags); }
 };
 
 // AMOs
@@ -115,6 +122,9 @@ class AtomicMemOpMicro : public RiscvMicroInst
 
     std::string generateDisassembly(
         Addr pc, const loader::SymbolTable *symtab) const override;
+
+  public:
+    void setMemAccessFlags(Request::Flags flags) { memAccessFlags.set(flags); }
 };
 
 /**

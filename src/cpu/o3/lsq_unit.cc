@@ -244,6 +244,8 @@ LSQUnit::resetState()
     htmStarts = htmStops = 0;
 
     storeWBIt = storeQueue.begin();
+    storeSendIt = storeQueue.begin();
+    storeWBHoldCycles = 0;
 
     retryPkt = NULL;
     memDepViolator = NULL;
@@ -827,10 +829,60 @@ void
 LSQUnit::writebackBlockedStore()
 {
     assert(isStoreBlocked);
-    storeWBIt->request()->sendPacketToCache();
-    if (storeWBIt->request()->isSent()){
+    storeSendIt->request()->sendPacketToCache();
+    if (storeSendIt->request()->isSent()){
         storePostSend();
     }
+}
+
+StoreQueue::iterator
+LSQUnit::selectStoreForWriteback()
+{
+    // TSO / Ztso: preserve FIFO store visibility (needsTSO path unchanged).
+    if (needsTSO)
+        return storeWBIt;
+
+    // RVWMO PodWW: prefer a younger ready store that does not *byte-overlap*
+    // any older unsent store. Why not cache-line: litmus harness often uses
+    // stride=1 so x/y share a line; line-locking would erase the MP window
+    // while RVWMO still allows different-address same-line store reordering.
+    // Same-address (byte overlap) stays program-ordered (never weaker).
+    auto best = storeWBIt;
+    for (auto it = storeWBIt + 1; it != storeQueue.end(); ++it) {
+        if (!it.dereferenceable() || !it->valid() || !it->canWB() ||
+            it->committed() || !it->hasRequest()) {
+            continue;
+        }
+
+        // mainReq() returns RequestPtr (smart ptr), not a raw pointer.
+        auto req = it->request()->mainReq();
+        // Release / LLSC must still drain older stores first (existing rule).
+        if ((req->isLLSC() || req->isRelease()) &&
+            (it.idx() != storeQueue.head())) {
+            continue;
+        }
+
+        bool overlaps_older = false;
+        for (auto older = storeWBIt; older != it; ++older) {
+            if (!older->valid() || older->committed() || older->size() == 0 ||
+                it->size() == 0) {
+                continue;
+            }
+            const Addr o_s = older->instruction()->effAddr;
+            const Addr o_e = o_s + older->size();
+            const Addr n_s = it->instruction()->effAddr;
+            const Addr n_e = n_s + it->size();
+            if (o_s < n_e && n_s < o_e) {
+                overlaps_older = true;
+                break;
+            }
+        }
+        if (!overlaps_older) {
+            // Youngest eligible maximizes PodWW reordering for litmus MP.
+            best = it;
+        }
+    }
+    return best;
 }
 
 void
@@ -844,7 +896,6 @@ LSQUnit::writebackStores()
     while (storesToWB > 0 &&
            storeWBIt.dereferenceable() &&
            storeWBIt->valid() &&
-           storeWBIt->canWB() &&
            ((!needsTSO) || (!storeInFlight)) &&
            lsq->cachePortAvailable(false)) {
 
@@ -854,58 +905,108 @@ LSQUnit::writebackStores()
             break;
         }
 
+        // Need an unsent ready store at the WB cursor for FIFO; under RVWMO
+        // we may then select a younger candidate.
+        if (!storeWBIt->canWB() || storeWBIt->committed()) {
+            if (storeWBIt->committed()) {
+                ++storeWBIt;
+                continue;
+            }
+            break;
+        }
+
+        // Phase 6 Reduce: open a PodWW window. Without this, the oldest store
+        // usually WBs the same cycle it becomes canWB — before a younger store
+        // commits — so selectStoreForWriteback never sees two ready stores.
+        // Hold the oldest briefly while a younger SQ entry is still uncommitted.
+        if (!needsTSO) {
+            bool younger_uncommitted = false;
+            for (auto it = storeWBIt + 1; it != storeQueue.end(); ++it) {
+                if (!it.dereferenceable() || !it->valid())
+                    continue;
+                if (!it->canWB() && !it->committed()) {
+                    younger_uncommitted = true;
+                    break;
+                }
+            }
+            // Hold up to a few cycles so younger stores can join canWB set.
+            // WriteBarrier commit still waits for hasStoresToWB()==0 (never weaker).
+            if (younger_uncommitted && storeWBHoldCycles < 32) {
+                ++storeWBHoldCycles;
+                DPRINTF(LSQUnit,
+                        "RVWMO: delaying WB of [sn:%lli] for PodWW window "
+                        "(hold=%d)\n",
+                        storeWBIt->instruction()->seqNum, storeWBHoldCycles);
+                break;
+            }
+        }
+        storeWBHoldCycles = 0;
+
+        storeSendIt = selectStoreForWriteback();
+        if (!storeSendIt.dereferenceable() || !storeSendIt->valid() ||
+            !storeSendIt->canWB() || storeSendIt->committed()) {
+            break;
+        }
+
         // Store didn't write any data so no need to write it back to
         // memory.
-        if (storeWBIt->size() == 0) {
+        if (storeSendIt->size() == 0) {
             /* It is important that the preincrement happens at (or before)
              * the call, as the the code of completeStore checks
              * storeWBIt. */
-            completeStore(storeWBIt++);
+            auto done = storeSendIt;
+            if (storeSendIt == storeWBIt)
+                ++storeWBIt;
+            completeStore(done);
             continue;
         }
 
-        if (storeWBIt->instruction()->isDataPrefetch()) {
-            storeWBIt++;
+        if (storeSendIt->instruction()->isDataPrefetch()) {
+            if (storeSendIt == storeWBIt)
+                ++storeWBIt;
+            else
+                storeSendIt++;
             continue;
         }
 
-        assert(storeWBIt->hasRequest());
-        assert(!storeWBIt->committed());
+        assert(storeSendIt->hasRequest());
+        assert(!storeSendIt->committed());
 
-        DynInstPtr inst = storeWBIt->instruction();
-        LSQRequest* request = storeWBIt->request();
+        DynInstPtr inst = storeSendIt->instruction();
+        LSQRequest* request = storeSendIt->request();
 
         // Process store conditionals or store release after all previous
         // stores are completed
         if ((request->mainReq()->isLLSC() ||
              request->mainReq()->isRelease()) &&
-             (storeWBIt.idx() != storeQueue.head())) {
+             (storeSendIt.idx() != storeQueue.head())) {
             DPRINTF(LSQUnit, "Store idx:%i PC:%s to Addr:%#x "
                 "[sn:%lli] is %s%s and not head of the queue\n",
-                storeWBIt.idx(), inst->pcState(),
+                storeSendIt.idx(), inst->pcState(),
                 request->mainReq()->getPaddr(), inst->seqNum,
                 request->mainReq()->isLLSC() ? "SC" : "",
                 request->mainReq()->isRelease() ? "/Release" : "");
             break;
         }
 
-        storeWBIt->committed() = true;
+        storeSendIt->committed() = true;
 
         assert(!inst->memData);
         inst->memData = new uint8_t[request->_size];
 
-        if (storeWBIt->isAllZeros())
+        if (storeSendIt->isAllZeros())
             memset(inst->memData, 0, request->_size);
         else
-            memcpy(inst->memData, storeWBIt->data(), request->_size);
+            memcpy(inst->memData, storeSendIt->data(), request->_size);
 
         request->buildPackets();
 
         DPRINTF(LSQUnit, "D-Cache: Writing back store idx:%i PC:%s "
-                "to Addr:%#x, data:%#x [sn:%lli]\n",
-                storeWBIt.idx(), inst->pcState(),
+                "to Addr:%#x, data:%#x [sn:%lli]%s\n",
+                storeSendIt.idx(), inst->pcState(),
                 request->mainReq()->getPaddr(), (int)*(inst->memData),
-                inst->seqNum);
+                inst->seqNum,
+                (storeSendIt != storeWBIt) ? " (RVWMO reorder)" : "");
 
         // @todo: Remove this SC hack once the memory system handles it.
         if (inst->isStoreConditional()) {
@@ -928,11 +1029,13 @@ LSQUnit::writebackStores()
                 WritebackEvent *wb = new WritebackEvent(inst,
                         new_pkt, this);
                 cpu->schedule(wb, curTick() + 1);
-                completeStore(storeWBIt);
-                if (!storeQueue.empty())
-                    storeWBIt++;
-                else
-                    storeWBIt = storeQueue.end();
+                completeStore(storeSendIt);
+                if (storeSendIt == storeWBIt) {
+                    if (!storeQueue.empty())
+                        storeWBIt++;
+                    else
+                        storeWBIt = storeQueue.end();
+                }
                 continue;
             }
         }
@@ -946,8 +1049,9 @@ LSQUnit::writebackStores()
             main_pkt->dataStatic(inst->memData);
             request->mainReq()->localAccessor(thread, main_pkt);
             delete main_pkt;
-            completeStore(storeWBIt);
-            storeWBIt++;
+            completeStore(storeSendIt);
+            if (storeSendIt == storeWBIt)
+                storeWBIt++;
             continue;
         }
         /* Send to cache */
@@ -1094,7 +1198,7 @@ void
 LSQUnit::storePostSend()
 {
     if (isStalled() &&
-        storeWBIt->instruction()->seqNum == stallingStoreIsn) {
+        storeSendIt->instruction()->seqNum == stallingStoreIsn) {
         DPRINTF(LSQUnit, "Unstalling, stalling store [sn:%lli] "
                 "load idx:%li\n",
                 stallingStoreIsn, stallingLoadIdx);
@@ -1103,14 +1207,14 @@ LSQUnit::storePostSend()
         iewStage->replayMemInst(loadQueue[stallingLoadIdx].instruction());
     }
 
-    if (!storeWBIt->instruction()->isStoreConditional()) {
+    if (!storeSendIt->instruction()->isStoreConditional()) {
         // The store is basically completed at this time. This
         // only works so long as the checker doesn't try to
         // verify the value in memory for stores.
-        storeWBIt->instruction()->setCompleted();
+        storeSendIt->instruction()->setCompleted();
 
         if (cpu->checker) {
-            cpu->checker->verify(storeWBIt->instruction());
+            cpu->checker->verify(storeSendIt->instruction());
         }
     }
 
@@ -1118,7 +1222,15 @@ LSQUnit::storePostSend()
         storeInFlight = true;
     }
 
-    storeWBIt++;
+    // Advance oldest-unsent cursor only when we sent that entry; skip holes
+    // already sent out-of-order under RVWMO.
+    if (storeSendIt == storeWBIt) {
+        ++storeWBIt;
+        while (storeWBIt.dereferenceable() && storeWBIt->valid() &&
+               storeWBIt->committed()) {
+            ++storeWBIt;
+        }
+    }
 }
 
 void
@@ -1273,7 +1385,7 @@ LSQUnit::trySendPacket(bool isLoad, PacketPtr data_pkt)
             ++stats.blockedByCache;
         }
         if (!isLoad) {
-            assert(request == storeWBIt->request());
+            assert(request == storeSendIt->request());
             isStoreBlocked = true;
         }
         request->packetNotSent();
@@ -1577,9 +1689,10 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
             } else if (
                     coverage == AddrRangeCoverage::PartialAddrRangeCoverage) {
                 // If it's already been written back, then don't worry about
-                // stalling on it.
+                // stalling on it. Under RVWMO out-of-order store WB, a younger
+                // store may complete before an older unsent one; skip it —
+                // the value is already in the memory system.
                 if (store_it->completed()) {
-                    panic("Should not check one of these");
                     continue;
                 }
 

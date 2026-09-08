@@ -682,6 +682,12 @@ def run(options, root, testsys, cpu_class):
     if options.checkpoint_restore:
         cpt_starttick, checkpoint_dir = findCptDir(options, cptdir, testsys)
     root.apply_config(options.param)
+    # Phase 6B: re-bind RISC-V Ztso → O3 needsTSO after --param may have
+    # added Ztso to isa.extra_extensions (createThreads ran earlier).
+    for cpu in getattr(testsys, "cpu", []):
+        sync = getattr(cpu, "syncNeedsTSOFromZtso", None)
+        if callable(sync):
+            sync()
     m5.instantiate(checkpoint_dir)
 
     # Initialization is complete.  If we're not in control of simulation

@@ -392,6 +392,15 @@ class LSQUnit
     /** Handles completing the send of a store to memory. */
     void storePostSend();
 
+    /**
+     * Pick which committed store to send next.
+     * Why: under RVWMO (!needsTSO) PodWW needs younger stores visible before
+     * older ones at different addresses (MP Sometimes). TSO keeps FIFO.
+     * Never weaker: Release/LLSC still head-only; overlapping addr stay ordered;
+     * WriteBarrier drain at commit is unchanged.
+     */
+    typename StoreQueue::iterator selectStoreForWriteback();
+
   public:
     /** Attempts to send a packet to the cache.
      * Check if there are ports available. Return true if
@@ -484,10 +493,14 @@ class LSQUnit
     // sanity checks and debugging
     uint64_t lastRetiredHtmUid;
 
-    /** The index of the first instruction that may be ready to be
-     * written back, and has not yet been written back.
-     */
+    /** Oldest SQ entry not yet sent to the memory system. */
     typename StoreQueue::iterator storeWBIt;
+
+    /** Entry currently being sent; may be younger than storeWBIt when !needsTSO. */
+    typename StoreQueue::iterator storeSendIt;
+
+    /** Cycles we have held the oldest canWB store to open a PodWW window. */
+    int storeWBHoldCycles = 0;
 
     /** Address Mask for a cache block (e.g. ~(cache_block_size-1)) */
     Addr cacheBlockMask;

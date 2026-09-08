@@ -56,6 +56,19 @@ class RiscvTimingSimpleCPU(BaseTimingSimpleCPU, RiscvCPU):
 class RiscvO3CPU(BaseO3CPU, RiscvCPU):
     mmu = RiscvMMU()
 
+    def syncNeedsTSOFromZtso(self):
+        """Phase 6B: Ztso on ⇒ needsTSO; otherwise leave RVWMO (needsTSO=False).
+
+        Called from createThreads and again after --param apply_config so that
+        `extra_extensions=["Ztso"]` set via command line still binds TSO.
+        """
+        ztso = any(isa.reports_extension("Ztso") for isa in self.isa)
+        self.needsTSO = bool(ztso)
+
+    def createThreads(self):
+        super().createThreads()
+        self.syncNeedsTSOFromZtso()
+
 
 class RiscvMinorCPU(BaseMinorCPU, RiscvCPU):
     mmu = RiscvMMU()

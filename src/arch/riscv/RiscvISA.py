@@ -252,7 +252,7 @@ _EXTENSION_REGISTRY = {
     "Zksh": {"implemented": True},
     "Zkt": {"implemented": False},
     "Zmmul": {"implemented": False},
-    "Ztso": {"implemented": False},
+    "Ztso": {"implemented": True},
     "Zvbb": {"implemented": False},
     "Zvbc": {"implemented": True},
     "Zve32f": {"implemented": True},
